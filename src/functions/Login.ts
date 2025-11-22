@@ -295,7 +295,7 @@ export class Login {
             const body = JSON.parse(route.request().postData() || '{}')
             body.isFidoSupported = false
             route.continue({ postData: JSON.stringify(body) })
-        }).catch(()=>{})
+        }).catch(() => { })
 
         await page.goto(authorizeUrl.href)
 
@@ -337,7 +337,7 @@ export class Login {
         const tokenData: OAuth = await tokenResponse.data
 
         const authDuration = Date.now() - authStart
-        this.bot.log(this.bot.isMobile, 'LOGIN-APP', `Successfully authorized in ${Math.round(authDuration/1000)}s`)
+        this.bot.log(this.bot.isMobile, 'LOGIN-APP', `Successfully authorized in ${Math.round(authDuration / 1000)}s`)
         return tokenData.access_token
     }
 
@@ -368,7 +368,7 @@ export class Login {
                     this.bot.log(this.bot.isMobile, 'LOGIN-GUIDE', 'You can also set LOGIN_MAX_WAIT_MS to increase this timeout if needed.')
                     guidanceLogged = true
                 }
-                throw this.bot.log(this.bot.isMobile, 'LOGIN-TIMEOUT', `Login timed out after ${Math.round(elapsed/1000)}s without completing`, 'error')
+                throw this.bot.log(this.bot.isMobile, 'LOGIN-TIMEOUT', `Login timed out after ${Math.round(elapsed / 1000)}s without completing`, 'error')
             }
         }
 
@@ -387,7 +387,7 @@ export class Login {
         if (passkeyVideo) {
             const skipButton = await page.$('button[data-testid="secondaryButton"]')
             if (skipButton) {
-                await skipButton.click().catch(()=>{})
+                await skipButton.click().catch(() => { })
                 if (!this.passkeyHandled) {
                     this.bot.log(this.bot.isMobile, 'LOGIN-PASSKEY', 'Passkey dialog detected (video heuristic) -> clicked "Skip for now"')
                 }
@@ -403,7 +403,7 @@ export class Login {
             const secondaryBtn = await page.waitForSelector('button[data-testid="secondaryButton"]', { timeout: 500 }).catch(() => null)
             const primaryBtn = await page.waitForSelector('button[data-testid="primaryButton"]', { timeout: 500 }).catch(() => null)
             if (looksLikePasskey && secondaryBtn) {
-                await secondaryBtn.click().catch(()=>{})
+                await secondaryBtn.click().catch(() => { })
                 if (!this.passkeyHandled) {
                     this.bot.log(this.bot.isMobile, 'LOGIN-PASSKEY', `Passkey dialog detected (title: "${titleText}") -> clicked secondary`)
                 }
@@ -413,7 +413,7 @@ export class Login {
             } else if (!didSomething && secondaryBtn && primaryBtn) {
                 const secText = (await secondaryBtn.textContent() || '').trim()
                 if (/skip for now/i.test(secText)) {
-                    await secondaryBtn.click().catch(()=>{})
+                    await secondaryBtn.click().catch(() => { })
                     if (!this.passkeyHandled) {
                         this.bot.log(this.bot.isMobile, 'LOGIN-PASSKEY', 'Passkey dialog (pair heuristic) -> clicked secondary (Skip for now)')
                     }
@@ -424,8 +424,8 @@ export class Login {
             }
             if (!didSomething) {
                 const skipByText = await page.locator('xpath=//button[contains(normalize-space(.), "Skip for now")]').first()
-                if (await skipByText.isVisible().catch(()=>false)) {
-                    await skipByText.click().catch(()=>{})
+                if (await skipByText.isVisible().catch(() => false)) {
+                    await skipByText.click().catch(() => { })
                     if (!this.passkeyHandled) {
                         this.bot.log(this.bot.isMobile, 'LOGIN-PASSKEY', 'Passkey dialog (text fallback) -> clicked "Skip for now"')
                     }
@@ -437,7 +437,7 @@ export class Login {
             if (!didSomething) {
                 const closeBtn = await page.$('#close-button')
                 if (closeBtn) {
-                    await closeBtn.click().catch(()=>{})
+                    await closeBtn.click().catch(() => { })
                     if (!this.passkeyHandled) {
                         this.bot.log(this.bot.isMobile, 'LOGIN-PASSKEY', 'Attempted close button on potential passkey modal')
                     }
@@ -448,14 +448,42 @@ export class Login {
         }
 
         // KMSI (Keep me signed in) prompt
-        const kmsi = await page.waitForSelector('[data-testid="kmsiVideo"]', { timeout: 800 }).catch(()=>null)
+        const kmsi = await page.waitForSelector('[data-testid="kmsiVideo"]', { timeout: 800 }).catch(() => null)
         if (kmsi) {
             const yesButton = await page.$('button[data-testid="primaryButton"]')
             if (yesButton) {
-                await yesButton.click().catch(()=>{})
+                await yesButton.click().catch(() => { })
                 this.bot.log(this.bot.isMobile, 'LOGIN-KMSI', 'KMSI dialog detected -> accepted (Yes)')
                 await page.waitForTimeout(300)
                 didSomething = true
+            }
+        }
+
+        // NEW: Handle "We're updating our terms"
+        if (!didSomething) {
+            const termsTitle = await page.waitForSelector('text="We\'re updating our terms"', { timeout: 800 }).catch(() => null)
+            if (termsTitle) {
+                const nextBtn = await page.waitForSelector('button[type="submit"], button[data-testid="primaryButton"]', { timeout: 800 }).catch(() => null)
+                if (nextBtn) {
+                    await nextBtn.click().catch(() => { })
+                    this.bot.log(this.bot.isMobile, 'LOGIN-TERMS', 'Updated Terms detected -> clicked Next')
+                    await page.waitForTimeout(300)
+                    didSomething = true
+                }
+            }
+        }
+
+        // NEW: Handle "Let's protect your account"
+        if (!didSomething) {
+            const protectTitle = await page.waitForSelector('text="Let\'s protect your account"', { timeout: 800 }).catch(() => null)
+            if (protectTitle) {
+                const skipBtn = await page.waitForSelector('#iShowSkip', { timeout: 800 }).catch(() => null)
+                if (skipBtn) {
+                    await skipBtn.click().catch(() => { })
+                    this.bot.log(this.bot.isMobile, 'LOGIN-PROTECT', 'Protect Account detected -> clicked Skip (#iShowSkip)')
+                    await page.waitForTimeout(300)
+                    didSomething = true
+                }
             }
         }
 
@@ -481,7 +509,7 @@ export class Login {
             const titleEl = await page.waitForSelector('[data-testid="title"]', { timeout: 500 }).catch(() => null)
             const secondaryBtn = await page.waitForSelector('button[data-testid="secondaryButton"]', { timeout: 500 }).catch(() => null)
             // Direct text locator fallback (sometimes data-testid changes)
-            const textSkip = secondaryBtn ? null : await page.locator('xpath=//button[contains(normalize-space(.), "Skip for now")]').first().isVisible().catch(()=>false)
+            const textSkip = secondaryBtn ? null : await page.locator('xpath=//button[contains(normalize-space(.), "Skip for now")]').first().isVisible().catch(() => false)
             if (secondaryBtn) {
                 // Heuristic: if title indicates passkey or both primary/secondary exist with typical text
                 let shouldClick = false

@@ -373,8 +373,15 @@ export default class BrowserFunc {
 
             await this.bot.utils.wait(2000)
 
-            // Close browser
+            // Close browser context
             await browser.close()
+            
+            // Close the underlying browser process
+            const browserInstance = browser.browser()
+            if (browserInstance) {
+                await browserInstance.close()
+            }
+            
             this.bot.log(this.bot.isMobile, 'CLOSE-BROWSER', 'Browser closed cleanly!')
         } catch (error) {
             throw this.bot.log(this.bot.isMobile, 'CLOSE-BROWSER', 'An error occurred:' + error, 'error')
