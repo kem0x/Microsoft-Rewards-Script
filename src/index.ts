@@ -8,7 +8,7 @@ import BrowserUtil from './browser/BrowserUtil'
 
 import { log } from './util/Logger'
 import Util from './util/Utils'
-import { loadAccounts, loadConfig, saveSessionData } from './util/Load'
+import { loadAccounts, loadConfig, saveSessionData, isAccountCompletedToday, markAccountCompleted } from './util/Load'
 
 import { Login } from './functions/Login'
 import { Workers } from './functions/Workers'
@@ -160,6 +160,13 @@ export class MicrosoftRewardsBot {
 
     private async runTasks(accounts: Account[]) {
         for (const account of accounts) {
+            // Check if account was already completed today
+            const alreadyCompleted = await isAccountCompletedToday(this.config.sessionPath, account.email)
+            if (alreadyCompleted) {
+                log('main', 'MAIN-WORKER', `Account ${account.email} already completed today, skipping...`, 'log', 'yellow')
+                continue
+            }
+
             log('main', 'MAIN-WORKER', `Started tasks for account ${account.email}`)
 
             const accountStart = Date.now()
@@ -226,7 +233,7 @@ export class MicrosoftRewardsBot {
             const durationMs = accountEnd - accountStart
             const totalCollected = desktopCollected + mobileCollected
             const initialTotal = (desktopInitial || 0) + (mobileInitial || 0)
-            this.accountSummaries.push({
+            const accountSummary: AccountSummary = {
                 email: account.email,
                 durationMs,
                 desktopCollected,
@@ -235,27 +242,35 @@ export class MicrosoftRewardsBot {
                 initialTotal,
                 endTotal: initialTotal + totalCollected,
                 errors
-            })
+            }
+
+            this.accountSummaries.push(accountSummary)
 
             log('main', 'MAIN-WORKER', `Completed tasks for account ${account.email}`, 'log', 'green')
+
+            // Send conclusion webhook for this account immediately
+            await this.sendConclusion([accountSummary])
+
+            // Mark account as completed for today
+            await markAccountCompleted(this.config.sessionPath, account.email)
         }
 
         log(this.isMobile, 'MAIN-PRIMARY', 'Completed tasks for ALL accounts', 'log', 'green')
+        
         // Extra diagnostic summary when verbose
         if (process.env.DEBUG_REWARDS_VERBOSE === '1') {
             for (const summary of this.accountSummaries) {
                 log('main','SUMMARY-DEBUG',`Account ${summary.email} collected D:${summary.desktopCollected} M:${summary.mobileCollected} TOTAL:${summary.totalCollected} ERRORS:${summary.errors.length ? summary.errors.join(';') : 'none'}`)
             }
         }
+        
         // If in worker mode (clusters>1) send summaries to primary
         if (this.config.clusters > 1 && !cluster.isPrimary) {
             if (process.send) {
                 process.send({ type: 'summary', data: this.accountSummaries })
             }
-        } else {
-            // Single process mode -> build and send conclusion directly
-            await this.sendConclusion(this.accountSummaries)
         }
+        
         process.exit()
     }
 

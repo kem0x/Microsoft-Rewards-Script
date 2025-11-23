@@ -114,3 +114,38 @@ export async function saveFingerprintData(sessionPath: string, email: string, is
         throw new Error(error as string)
     }
 }
+
+export async function isAccountCompletedToday(sessionPath: string, email: string): Promise<boolean> {
+    try {
+        const completionFile = path.join(__dirname, '../browser/', sessionPath, email, 'last_completion.json')
+        
+        if (!fs.existsSync(completionFile)) {
+            return false
+        }
+
+        const data = await fs.promises.readFile(completionFile, 'utf-8')
+        const completion = JSON.parse(data)
+        
+        const today = new Date().toISOString().split('T')[0]
+        return completion.date === today
+    } catch (error) {
+        return false
+    }
+}
+
+export async function markAccountCompleted(sessionPath: string, email: string): Promise<void> {
+    try {
+        const sessionDir = path.join(__dirname, '../browser/', sessionPath, email)
+        
+        if (!fs.existsSync(sessionDir)) {
+            await fs.promises.mkdir(sessionDir, { recursive: true })
+        }
+
+        const completionFile = path.join(sessionDir, 'last_completion.json')
+        const today = new Date().toISOString().split('T')[0]
+        
+        await fs.promises.writeFile(completionFile, JSON.stringify({ date: today }))
+    } catch (error) {
+        throw new Error(error as string)
+    }
+}
