@@ -32,7 +32,27 @@ export default class BrowserFunc {
                 return
             }
 
-            await page.goto(this.bot.config.baseURL)
+            // Try navigation with retry logic
+            let navigationSuccess = false
+            for (let navAttempt = 1; navAttempt <= 3; navAttempt++) {
+                try {
+                    await page.goto(this.bot.config.baseURL, { waitUntil: 'domcontentloaded', timeout: 30000 })
+                    navigationSuccess = true
+                    break
+                } catch (navError: any) {
+                    const errorMsg = navError?.message || String(navError)
+                    this.bot.log(this.bot.isMobile, 'GO-HOME', `Navigation attempt ${navAttempt}/3 failed: ${errorMsg}`, 'warn')
+                    if (navAttempt < 3) {
+                        await this.bot.utils.wait(3000)
+                    } else {
+                        throw new Error(`Failed to navigate after 3 attempts: ${errorMsg}`)
+                    }
+                }
+            }
+
+            if (!navigationSuccess) {
+                throw new Error('Navigation failed after all retries')
+            }
 
             const maxIterations = 5 // Maximum iterations set to 5
 
@@ -64,7 +84,12 @@ export default class BrowserFunc {
                     await this.bot.browser.utils.tryDismissAllMessages(page)
 
                     await this.bot.utils.wait(2000)
-                    await page.goto(this.bot.config.baseURL)
+                    // Retry navigation with error handling
+                    try {
+                        await page.goto(this.bot.config.baseURL, { waitUntil: 'domcontentloaded', timeout: 30000 })
+                    } catch (retryError: any) {
+                        this.bot.log(this.bot.isMobile, 'GO-HOME', `Retry navigation failed: ${retryError?.message}`, 'warn')
+                    }
                 } else {
                     this.bot.log(this.bot.isMobile, 'GO-HOME', 'Visited homepage successfully')
                     break
@@ -93,16 +118,16 @@ export default class BrowserFunc {
                 await this.goHome(this.bot.homePage)
             }
             let lastError: any = null
-            for (let attempt = 1; attempt <= 2; attempt++) {
+            for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
                     // Reload the page to get new data
-                    await this.bot.homePage.reload({ waitUntil: 'domcontentloaded' })
+                    await this.bot.homePage.reload({ waitUntil: 'domcontentloaded', timeout: 30000 })
                     lastError = null
                     break
                 } catch (re) {
                     lastError = re
                     const msg = (re instanceof Error ? re.message : String(re))
-                    this.bot.log(this.bot.isMobile, 'GET-DASHBOARD-DATA', `Reload failed attempt ${attempt}: ${msg}`, 'warn')
+                    this.bot.log(this.bot.isMobile, 'GET-DASHBOARD-DATA', `Reload failed attempt ${attempt}/3: ${msg}`, 'warn')
                     // If page/context closed => bail early after first retry
                     if (msg.includes('has been closed')) {
                         if (attempt === 1) {
@@ -114,20 +139,76 @@ export default class BrowserFunc {
                             break
                         }
                     }
-                    if (attempt === 2 && lastError) throw lastError
-                    await this.bot.utils.wait(1000)
+                    if (attempt === 3 && lastError) throw lastError
+                    await this.bot.utils.wait(2000)
                 }
             }
+
+            // Wait for page to be fully loaded
+            await this.bot.utils.wait(2000)
 
             const scriptContent = await this.bot.homePage.evaluate(() => {
                 const scripts = Array.from(document.querySelectorAll('script'))
                 const targetScript = scripts.find(script => script.innerText.includes('var dashboard'))
 
                 return targetScript?.innerText ? targetScript.innerText : null
-            })
+            }).catch(() => null)
 
             if (!scriptContent) {
-                throw this.bot.log(this.bot.isMobile, 'GET-DASHBOARD-DATA', 'Dashboard data not found within script', 'error')
+                // Capture page info for debugging
+                const pageInfo = await this.bot.homePage.evaluate(() => {
+                    return {
+                        url: window.location.href,
+                        title: document.title,
+                        bodyText: document.body?.innerText?.substring(0, 500) || 'No body text',
+                        scriptCount: document.querySelectorAll('script').length
+                    }
+                }).catch(() => ({ url: 'unknown', title: 'unknown', bodyText: 'error', scriptCount: 0 }))
+
+                this.bot.log(this.bot.isMobile, 'GET-DASHBOARD-DATA', `Dashboard script not found. Page URL: ${pageInfo.url}, Title: "${pageInfo.title}", Scripts: ${pageInfo.scriptCount}`, 'warn')
+                
+                // Try navigating to home page and retry
+                this.bot.log(this.bot.isMobile, 'GET-DASHBOARD-DATA', 'Attempting navigation and retry...', 'warn')
+                await this.goHome(this.bot.homePage)
+                await this.bot.utils.wait(5000) // Increased wait time
+                
+                const retryScriptContent = await this.bot.homePage.evaluate(() => {
+                    const scripts = Array.from(document.querySelectorAll('script'))
+                    const targetScript = scripts.find(script => script.innerText.includes('var dashboard'))
+                    return targetScript?.innerText ? targetScript.innerText : null
+                }).catch(() => null)
+                
+                if (!retryScriptContent) {
+                    // Final attempt: capture page state
+                    const finalPageInfo = await this.bot.homePage.evaluate(() => {
+                        return {
+                            url: window.location.href,
+                            title: document.title,
+                            hasMoreActivities: !!document.querySelector('#more-activities'),
+                            scriptCount: document.querySelectorAll('script').length
+                        }
+                    }).catch(() => ({ url: 'unknown', title: 'unknown', hasMoreActivities: false, scriptCount: 0 }))
+
+                    throw this.bot.log(this.bot.isMobile, 'GET-DASHBOARD-DATA', `Dashboard data not found after retry. URL: ${finalPageInfo.url}, Has activities: ${finalPageInfo.hasMoreActivities}, Scripts: ${finalPageInfo.scriptCount}`, 'error')
+                }
+                
+                // Extract the dashboard object from the retry script content
+                const retryDashboardData = await this.bot.homePage.evaluate((scriptContent: string) => {
+                    const regex = /var dashboard = (\{.*?\});/s
+                    const match = regex.exec(scriptContent)
+                    if (match && match[1]) {
+                        try {
+                            return JSON.parse(match[1])
+                        } catch { return null }
+                    }
+                    return null
+                }, retryScriptContent).catch(() => null)
+                
+                if (!retryDashboardData) {
+                    throw this.bot.log(this.bot.isMobile, 'GET-DASHBOARD-DATA', 'Unable to parse dashboard script after retry', 'error')
+                }
+                
+                return retryDashboardData
             }
 
             // Extract the dashboard object from the script content
@@ -137,10 +218,15 @@ export default class BrowserFunc {
                 const match = regex.exec(scriptContent)
 
                 if (match && match[1]) {
-                    return JSON.parse(match[1])
+                    try {
+                        return JSON.parse(match[1])
+                    } catch (e) {
+                        console.error('JSON parse error:', e)
+                        return null
+                    }
                 }
-
-            }, scriptContent)
+                return null
+            }, scriptContent).catch(() => null)
 
             if (!dashboardData) {
                 throw this.bot.log(this.bot.isMobile, 'GET-DASHBOARD-DATA', 'Unable to parse dashboard script', 'error')
@@ -149,7 +235,8 @@ export default class BrowserFunc {
             return dashboardData
 
         } catch (error) {
-            throw this.bot.log(this.bot.isMobile, 'GET-DASHBOARD-DATA', `Error fetching dashboard data: ${error}`, 'error')
+            const errorMsg = error instanceof Error ? error.message : String(error)
+            throw this.bot.log(this.bot.isMobile, 'GET-DASHBOARD-DATA', `Error fetching dashboard data: ${errorMsg}`, 'error')
         }
 
     }

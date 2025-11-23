@@ -306,6 +306,17 @@ export class Login {
         this.bot.log(this.bot.isMobile, 'LOGIN-APP', 'Waiting for authorization...')
         // eslint-disable-next-line no-constant-condition
         while (true) {
+            // Check for stuck redirect with removed=true parameter
+            if (currentUrl.hostname === 'login.live.com' && 
+                currentUrl.pathname === '/oauth20_desktop.srf' && 
+                currentUrl.searchParams.get('removed') === 'true') {
+                this.bot.log(this.bot.isMobile, 'LOGIN-APP', 'Detected stuck redirect (removed=true), reloading...', 'warn')
+                await page.goto(authorizeUrl.href)
+                await this.bot.utils.wait(2000)
+                currentUrl = new URL(page.url())
+                continue
+            }
+
             // Attempt to dismiss passkey/passkey-like screens quickly (non-blocking)
             await this.tryDismissPasskeyPrompt(page)
             if (currentUrl.hostname === 'login.live.com' && currentUrl.pathname === '/oauth20_desktop.srf') {
